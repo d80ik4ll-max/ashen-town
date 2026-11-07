@@ -1,0 +1,215 @@
+
+name: Build ASHEN TOWN APK V44
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          cd "$ANDROID_HOME/cmdline-tools"
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+          unzip -q tools.zip
+          mv cmdline-tools latest
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract game
+        run: |
+          unzip -o ASHEN_TOWN_V44_GITHUB_PWA.zip -d game
+          mkdir -p app/src/main/assets/site
+          cp -r game/* app/src/main/assets/site/
+
+      - name: Prepare Three.js
+        run: |
+          mkdir -p app/src/main/assets/site/vendor
+          curl -L \
+            https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js \
+            -o app/src/main/assets/site/vendor/three.module.js
+
+          find app/src/main/assets/site -name "*.html" -type f \
+            -exec sed -i \
+            's|https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js|./vendor/three.module.js|g' {} +
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/ashentown/game
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AshenTown"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.ashentown.game"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.ashentown.game"
+                  minSdk = 23
+                  targetSdk = 35
+                  versionCode = 44
+                  versionName = "44.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.webkit:webkit:1.12.1")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:label="ASHEN TOWN"
+                  android:usesCleartextTraffic="false">
+                  <activity
+                      android:name=".MainActivity"
+                      android:screenOrientation="landscape"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/ashentown/game/MainActivity.kt <<'EOF'
+          package com.ashentown.game
+
+          import android.app.Activity
+          import android.os.Bundle
+          import android.webkit.WebChromeClient
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import androidx.webkit.WebViewAssetLoader
+          import androidx.webkit.WebViewClientCompat
+
+          class MainActivity : Activity() {
+              private lateinit var webView: WebView
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  window.decorView.systemUiVisibility = (
+                      4 or 1024 or 4096 or 512 or 2
+                  )
+
+                  val assetLoader = WebViewAssetLoader.Builder()
+                      .addPathHandler(
+                          "/assets/",
+                          WebViewAssetLoader.AssetsPathHandler(this)
+                      )
+                      .build()
+
+                  webView = WebView(this)
+
+                  webView.settings.javaScriptEnabled = true
+                  webView.settings.domStorageEnabled = true
+                  webView.settings.allowFileAccess = false
+                  webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                  webView.webChromeClient = WebChromeClient()
+
+                  webView.webViewClient = object : WebViewClientCompat() {
+                      override fun shouldInterceptRequest(
+                          view: WebView,
+                          request: android.webkit.WebResourceRequest
+                      ): android.webkit.WebResourceResponse? {
+                          return assetLoader.shouldInterceptRequest(request.url)
+                      }
+                  }
+
+                  setContentView(webView)
+                  webView.loadUrl(
+                      "https://appassets.androidplatform.net/assets/site/index.html"
+                  )
+              }
+
+              override fun onBackPressed() {
+                  if (webView.canGoBack()) {
+                      webView.goBack()
+                  } else {
+                      super.onBackPressed()
+                  }
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASHEN-TOWN-APK-V44
+          path: app/build/outputs/apk/debug/app-debug.apk
