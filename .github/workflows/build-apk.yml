@@ -9,41 +9,64 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Extract project
         run: |
           mkdir extracted
           ZIP=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "ZIP archive not found"
+            exit 1
+          fi
           unzip -q "$ZIP" -d extracted
           PROJECT=$(find extracted -name settings.gradle -printf '%h\n' | head -n 1)
-          echo "PROJECT=$PROJECT" >> $GITHUB_ENV
+          if [ -z "$PROJECT" ]; then
+            PROJECT=$(find extracted -name settings.gradle.kts -printf '%h\n' | head -n 1)
+          fi
+          if [ -z "$PROJECT" ]; then
+            echo "Gradle project not found"
+            exit 1
+          fi
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-java@v4
+      - name: Set up Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: |
+          SDK=/usr/local/lib/android/sdk
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses
+          "$SDKMANAGER" --sdk_root="$SDK" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-      - name: Install SDK
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
       - name: Download Three.js
         run: |
           mkdir -p "$PROJECT/app/src/main/assets/vendor"
-          curl -L https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js \
+          curl -fL https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js \
             -o "$PROJECT/app/src/main/assets/vendor/three.module.js"
 
       - name: Build APK
-        run: cd "$PROJECT" && gradle --no-daemon assembleDebug
+        run: |
+          cd "$PROJECT"
+          gradle --no-daemon assembleDebug
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: ASHEN-TOWN-APK
           path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
