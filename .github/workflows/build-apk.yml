@@ -168,7 +168,7 @@ jobs:
 
                   <activity
                       android:name=".MainActivity"
-                      android:screenOrientation="portrait"
+                      android:screenOrientation="landscape"
                       android:exported="true">
 
                       <intent-filter>
