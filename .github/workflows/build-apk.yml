@@ -18,16 +18,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK manually
+      - name: Setup Android SDK
         run: |
-          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-
           SDK_ROOT="/usr/local/lib/android/sdk"
+
+          echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
+
           SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager not found"
+            echo "ERROR: sdkmanager not found"
             exit 1
           fi
 
@@ -50,27 +51,37 @@ jobs:
 
       - name: Prepare game files
         run: |
-          unzip -o ASHEN_TOWN_V47_GITHUB_PWA.zip -d game
-
-          mkdir -p app/src/main/assets/site/vendor
-
-          GAME_HTML=$(find game -name index.html -type f | head -n 1)
-
-          if [ -z "$GAME_HTML" ]; then
-            echo "index.html not found in ZIP"
+          if [ ! -f "ASHEN_TOWN_V47_GITHUB_PWA.zip" ]; then
+            echo "ERROR: V47 ZIP not found in repository root"
             exit 1
           fi
 
+          mkdir -p game
+          unzip -o ASHEN_TOWN_V47_GITHUB_PWA.zip -d game
+
+          GAME_HTML=$(find game -type f -name index.html | head -n 1)
+
+          if [ -z "$GAME_HTML" ]; then
+            echo "ERROR: index.html not found inside ZIP"
+            exit 1
+          fi
+
+          GAME_DIR=$(dirname "$GAME_HTML")
+
+          mkdir -p app/src/main/assets/site/vendor
+
           cp "$GAME_HTML" app/src/main/assets/site/index.html
 
-          cp "$(dirname "$GAME_HTML")/manifest.webmanifest" \
-            app/src/main/assets/site/ 2>/dev/null || true
+          if [ -f "$GAME_DIR/manifest.webmanifest" ]; then
+            cp "$GAME_DIR/manifest.webmanifest" app/src/main/assets/site/
+          fi
 
-          cp "$(dirname "$GAME_HTML")/icon.svg" \
-            app/src/main/assets/site/ 2>/dev/null || true
+          if [ -f "$GAME_DIR/icon.svg" ]; then
+            cp "$GAME_DIR/icon.svg" app/src/main/assets/site/
+          fi
 
           curl -fL \
-            https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js \
+            "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" \
             -o app/src/main/assets/site/vendor/three.module.js
 
           sed -i \
@@ -100,6 +111,12 @@ jobs:
 
           rootProject.name = "ASHEN_TOWN"
           include(":app")
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           EOF
 
           cat > build.gradle <<'EOF'
@@ -144,7 +161,6 @@ jobs:
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
               <application
                   android:theme="@android:style/Theme.Material.Light.NoActionBar"
                   android:label="ASHEN TOWN"
@@ -170,10 +186,10 @@ jobs:
 
           import android.app.Activity
           import android.os.Bundle
+          import android.net.Uri
           import android.webkit.WebView
           import android.webkit.WebViewClient
           import android.webkit.WebChromeClient
-          import android.net.Uri
           import android.webkit.WebResourceRequest
           import android.webkit.WebResourceResponse
           import androidx.webkit.WebViewAssetLoader
@@ -233,3 +249,4 @@ jobs:
         with:
           name: ASHEN-TOWN-APK-V47
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
